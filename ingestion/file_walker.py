@@ -100,6 +100,10 @@ def walk_repository(repo_path: Path, max_file_size_bytes: int | None = None) -> 
         for file_name in file_names:
             path = current_directory / file_name
             extension = path.suffix.lower()
+            # Runtime environment files may contain API keys and must never be
+            # sent to embeddings, keyword search, or an LLM prompt.
+            if file_name == ".env" or (file_name.startswith(".env.") and file_name != ".env.example"):
+                continue
             if extension in SKIP_EXTENSIONS:
                 continue
             try:

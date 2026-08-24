@@ -98,8 +98,22 @@ class RepoMindWorkflow:
             answer = sections
         else:
             chunks = state.get("retrieved_chunks", [])
-            references = "\n".join(f"- {chunk.get('metadata', {}).get('file_path', chunk.get('chunk_id'))}" for chunk in chunks)
-            answer = f"I found these relevant code locations for: {state.get('query', '')}\n{references}" if references else "No relevant indexed code was found."
+            context = "\n\n".join(chunk.get("content", "") for chunk in chunks)
+            try:
+                response = self.llm_provider.get_chat_model("generation").invoke(
+                    "Answer the user's repository question using only the retrieved context. "
+                    "Cite file paths and line ranges when available.\n\n"
+                    f"QUESTION: {state.get('query', '')}\nCONTEXT:\n{context}"
+                )
+                answer = getattr(response, "content", str(response))
+            except Exception:
+                paths = []
+                for chunk in chunks:
+                    path = chunk.get("metadata", {}).get("file_path", chunk.get("chunk_id"))
+                    if path and path not in paths:
+                        paths.append(path)
+                references = "\n".join(f"- {path}" for path in paths)
+                answer = f"I found these relevant code locations for: {state.get('query', '')}\n{references}" if references else "No relevant indexed code was found."
         return {"synthesized_answer": answer, "agent_trace": [trace_event("synthesizer", "combined grounded agent outputs", started_at)]}
 
     def _evaluate(self, state: AgentState) -> dict[str, Any]:
