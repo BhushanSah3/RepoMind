@@ -61,8 +61,12 @@ class ChromaStore:
 
         try:
             self._get_client().delete_collection(self.collection_name)
-        except ValueError:
-            pass
+        except Exception as error:
+            # ChromaDB versions use different exception classes for a missing
+            # collection (ValueError, NotFoundError, or InvalidCollection).
+            # A missing collection is the normal first-ingestion state.
+            if "does not exist" not in str(error).lower() and "not found" not in str(error).lower():
+                raise
         self._collection = None
 
     def get_collection_stats(self) -> dict[str, int]:
