@@ -1,5 +1,8 @@
 """Streamlit Community Cloud entry point for RepoMind."""
 
-# Streamlit executes this module on every rerun. Importing the application keeps
-# local development (`streamlit run app.py`) and Cloud deployment in sync.
-import app  # noqa: F401
+# ``import app`` is cached after the first Streamlit rerun, leaving the page
+# empty after any interaction. Execute the source file on every rerun instead.
+from pathlib import Path
+from runpy import run_path
+
+run_path(Path(__file__).with_name("app.py"), run_name="__main__")
