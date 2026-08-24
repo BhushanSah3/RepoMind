@@ -230,7 +230,13 @@ def _function_chunk(
         params=_parameters(node),
         returns=ast.unparse(node.returns) if node.returns else None,
         decorators=_decorators(node),
-        chunk_id=_chunk_id(file_path, "function", node.name),
+        # Methods such as ``__init__`` commonly appear in several classes in
+        # one file, so their IDs must include the owning class.
+        chunk_id=_chunk_id(
+            file_path,
+            "function",
+            f"{parent_class}.{node.name}" if parent_class else node.name,
+        ),
         is_large=line_end - line_start + 1 > LARGE_FUNCTION_LINES,
     )
 
