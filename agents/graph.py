@@ -119,8 +119,45 @@ class RepoMindWorkflow:
     def _evaluate(self, state: AgentState) -> dict[str, Any]:
         import asyncio
         started_at = perf_counter()
-        scores = asyncio.run(evaluate_response(state.get("query", ""), state.get("retrieved_chunks", []), state.get("synthesized_answer", ""), provider=self.llm_provider))
-        return {"faithfulness_score": scores.faithfulness, "context_relevance_score": scores.context_relevance, "answer_relevance_score": scores.answer_relevance, "evaluation_passed": scores.passed, "retry_count": state.get("retry_count", 0) + (0 if scores.passed else 1), "agent_trace": [trace_event("rag_triad", "evaluated answer", started_at, passed=scores.passed)]}
+        scores = asyncio.run(
+            evaluate_response(
+                state.get("query", ""),
+                state.get("retrieved_chunks", []),
+                state.get("synthesized_answer", ""),
+                provider=self.llm_provider
+            )
+        )
+        
+        result = {
+            "faithfulness_score": scores.faithfulness,
+            "context_relevance_score": scores.context_relevance,
+            "answer_relevance_score": scores.answer_relevance,
+            "evaluation_passed": scores.passed,
+            "retry_count": state.get("retry_count", 0) + (0 if scores.passed else 1),
+        }
+        
+        trace_msg = "evaluated answer"
+        if not scores.passed:
+            metrics = {
+                "faithfulness": scores.faithfulness,
+                "context_relevance": scores.context_relevance,
+                "answer_relevance": scores.answer_relevance,
+            }
+            lowest_metric = min(metrics, key=metrics.get)
+            
+            if lowest_metric == "faithfulness":
+                result["retrieval_strategy"] = "narrow"
+            elif lowest_metric == "context_relevance":
+                result["retrieval_strategy"] = "broaden"
+            else:
+                result["retrieval_strategy"] = "refocus"
+                
+            trace_msg = f"evaluated answer (failed on {lowest_metric})"
+            
+        result["agent_trace"] = [
+            trace_event("rag_triad", trace_msg, started_at, passed=scores.passed)
+        ]
+        return result
 
     @staticmethod
     def _after_evaluation(state: AgentState) -> str:

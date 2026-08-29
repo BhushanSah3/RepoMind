@@ -13,9 +13,9 @@ class TriadScores(BaseModel):
     passed: bool = True
 
 _PROMPTS = {
-    'faithfulness': 'Rate answer faithfulness to context from 0 to 1. Return only JSON {"score": number}.\nCONTEXT:\n{context}\nANSWER:\n{answer}',
-    'context_relevance': 'Rate context relevance to query from 0 to 1. Return only JSON {"score": number}.\nQUERY:{query}\nCONTEXT:\n{context}',
-    'answer_relevance': 'Rate answer relevance to query from 0 to 1. Return only JSON {"score": number}.\nQUERY:{query}\nANSWER:\n{answer}',
+    'faithfulness': 'Rate answer faithfulness to context from 0 to 1. Return only JSON {{"score": number}}.\nCONTEXT:\n{context}\nANSWER:\n{answer}',
+    'context_relevance': 'Rate context relevance to query from 0 to 1. Return only JSON {{"score": number}}.\nQUERY:{query}\nCONTEXT:\n{context}',
+    'answer_relevance': 'Rate answer relevance to query from 0 to 1. Return only JSON {{"score": number}}.\nQUERY:{query}\nANSWER:\n{answer}',
 }
 
 async def evaluate_response(query: str, retrieved_chunks: list[dict[str, Any]], answer: str, llm: Any | None = None, provider: LLMProvider | None = None) -> TriadScores:
