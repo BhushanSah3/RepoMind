@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     default_llm_provider: Literal["gemini", "groq", "ollama"] = "gemini"
     ollama_base_url: str = "http://localhost:11434"
 
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-3.6-flash"
     groq_model: str = "llama-3.1-8b-instant"
     ollama_model: str = "llama3.1"
 
