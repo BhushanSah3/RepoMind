@@ -16,6 +16,14 @@ Intent = Literal["code_lookup", "architecture", "bug_security", "code_review", "
 Complexity = Literal["simple", "moderate", "complex"]
 
 
+def _merge_dicts(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
+    """Reducer that merges specialist outputs instead of overwriting."""
+    merged = dict(left) if left else {}
+    if right:
+        merged.update(right)
+    return merged
+
+
 class AgentState(TypedDict, total=False):
     """Values shared between nodes in the RepoMind workflow.
 
@@ -33,7 +41,7 @@ class AgentState(TypedDict, total=False):
     retrieved_chunks: list[dict[str, Any]]
     retrieval_queries: list[str]
     retrieval_strategy: str
-    agent_outputs: dict[str, str]
+    agent_outputs: Annotated[dict[str, str], _merge_dicts]
     synthesized_answer: str
     faithfulness_score: float
     context_relevance_score: float

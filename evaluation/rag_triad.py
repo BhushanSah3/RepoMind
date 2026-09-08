@@ -5,12 +5,14 @@ import re
 from typing import Any
 from pydantic import BaseModel
 from llm.provider import LLMProvider
+from config.settings import get_settings
 
 class TriadScores(BaseModel):
     faithfulness: float = 1.0
     context_relevance: float = 1.0
     answer_relevance: float = 1.0
     passed: bool = True
+    evaluation_note: str | None = None
 
 _PROMPTS = {
     'faithfulness': 'Rate answer faithfulness to context from 0 to 1. Return only JSON {{"score": number}}.\nCONTEXT:\n{context}\nANSWER:\n{answer}',
@@ -25,9 +27,18 @@ async def evaluate_response(query: str, retrieved_chunks: list[dict[str, Any]], 
         model = llm or (provider or LLMProvider()).get_chat_model('evaluation')
         values = await asyncio.gather(*[_score(model, prompt.format(query=query, context=context, answer=answer)) for prompt in _PROMPTS.values()])
     except Exception:
-        return TriadScores()
+        return TriadScores(evaluation_note='LLM evaluation unavailable, assuming pass')
+    
     scores = dict(zip(_PROMPTS, values))
-    return TriadScores(**scores, passed=all(value >= .7 for value in scores.values()))
+    settings = get_settings()
+    
+    passed = (
+        scores['faithfulness'] >= settings.rag_faithfulness_threshold
+        and scores['context_relevance'] >= settings.rag_context_relevance_threshold
+        and scores['answer_relevance'] >= settings.rag_answer_relevance_threshold
+    )
+    
+    return TriadScores(**scores, passed=passed)
 
 async def _score(model: Any, prompt: str) -> float:
     response = await model.ainvoke(prompt)

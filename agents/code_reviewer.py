@@ -13,16 +13,38 @@ from llm.provider import LLMProvider
 CODE_REVIEWER_SYSTEM_PROMPT = """You are a senior code reviewer. Use only supplied code evidence.
 Give constructive, actionable feedback categorized as readability, performance, maintainability, testing, or documentation.
 For each suggestion cite the location, show the relevant current code, a suggested change, and reasoning.
+Use the dependency context to understand cross-file relationships and imports.
 Recognize strong patterns and avoid speculative or nitpicky feedback."""
 
 
 class CodeReviewer:
-    def __init__(self, llm_provider: LLMProvider | None = None) -> None:
+    def __init__(
+        self,
+        llm_provider: LLMProvider | None = None,
+        dependency_graph: Any | None = None,
+    ) -> None:
         self.llm_provider = llm_provider or LLMProvider()
+        self.dependency_graph = dependency_graph
 
     def node(self, state: AgentState) -> dict[str, Any]:
         started_at = perf_counter()
-        output = _generate(self.llm_provider, CODE_REVIEWER_SYSTEM_PROMPT, state["query"], state.get("retrieved_chunks", []))
+        # Include dependency context for cross-file understanding
+        graph_context = ""
+        if self.dependency_graph is not None:
+            try:
+                graph_context = (
+                    f"\n\nDependency/import graph context:\n"
+                    f"{self.dependency_graph.get_architecture_summary()}"
+                )
+            except Exception:
+                pass
+        output = _generate(
+            self.llm_provider,
+            CODE_REVIEWER_SYSTEM_PROMPT,
+            state["query"],
+            state.get("retrieved_chunks", []),
+            graph_context,
+        )
         return {
             "agent_outputs": {"code_reviewer": output},
             "agent_trace": [trace_event("code_reviewer", "reviewed retrieved code", started_at)],

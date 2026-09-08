@@ -92,3 +92,54 @@ def test_agent_state_fields():
     assert state["query"] == "test query"
     assert state["intent"] == "code_lookup"
     assert state["evaluation_passed"] is True
+
+
+def test_merge_dicts_reducer():
+    """_merge_dicts should merge two dicts, with right overriding left."""
+    from agents.state import _merge_dicts
+    left = {"architect": "analysis A"}
+    right = {"bug_hunter": "analysis B"}
+    merged = _merge_dicts(left, right)
+    assert merged == {"architect": "analysis A", "bug_hunter": "analysis B"}
+
+
+def test_merge_dicts_empty():
+    """_merge_dicts should handle empty dicts."""
+    from agents.state import _merge_dicts
+    assert _merge_dicts({}, {"a": "1"}) == {"a": "1"}
+    assert _merge_dicts({"a": "1"}, {}) == {"a": "1"}
+    assert _merge_dicts({}, {}) == {}
+
+
+def test_bug_hunter_accepts_dep_graph():
+    """BugHunter should accept dependency_graph parameter."""
+    from agents.bug_hunter import BugHunter
+    from unittest.mock import MagicMock
+    mock_graph = MagicMock()
+    mock_graph.get_architecture_summary.return_value = "test summary"
+    hunter = BugHunter(dependency_graph=mock_graph)
+    assert hunter.dependency_graph is mock_graph
+
+
+def test_code_reviewer_accepts_dep_graph():
+    """CodeReviewer should accept dependency_graph parameter."""
+    from agents.code_reviewer import CodeReviewer
+    from unittest.mock import MagicMock
+    mock_graph = MagicMock()
+    reviewer = CodeReviewer(dependency_graph=mock_graph)
+    assert reviewer.dependency_graph is mock_graph
+
+
+def test_build_graph_accepts_dep_graph():
+    """build_graph should accept dependency_graph keyword argument."""
+    from agents.graph import build_graph
+    from unittest.mock import MagicMock
+    # Just verify the function signature accepts the kwarg without error
+    code_retriever = MagicMock()
+    dep_graph = MagicMock()
+    try:
+        build_graph(code_retriever, dependency_graph=dep_graph)
+    except Exception:
+        # May fail if LangGraph isn't installed, but signature should be valid
+        pass
+

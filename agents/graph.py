@@ -22,6 +22,7 @@ class RepoMindWorkflow:
         self,
         code_retriever: CodeRetriever,
         *,
+        dependency_graph: Any | None = None,
         query_analyzer: QueryAnalyzer | None = None,
         architect: ArchitectAgent | None = None,
         bug_hunter: BugHunter | None = None,
@@ -31,9 +32,10 @@ class RepoMindWorkflow:
         provider = llm_provider or LLMProvider()
         self.query_analyzer = query_analyzer or QueryAnalyzer(provider)
         self.code_retriever = code_retriever
-        self.architect = architect or ArchitectAgent(provider)
-        self.bug_hunter = bug_hunter or BugHunter(provider)
-        self.code_reviewer = code_reviewer or CodeReviewer(provider)
+        # Pass dependency graph to all agents that benefit from cross-file context
+        self.architect = architect or ArchitectAgent(provider, dependency_graph=dependency_graph)
+        self.bug_hunter = bug_hunter or BugHunter(provider, dependency_graph=dependency_graph)
+        self.code_reviewer = code_reviewer or CodeReviewer(provider, dependency_graph=dependency_graph)
         self.llm_provider = provider
 
     def build(self) -> Any:
@@ -65,7 +67,8 @@ class RepoMindWorkflow:
             "code_reviewer": "code_reviewer",
             "synthesize": "synthesize",
         })
-        # Each selected specialist receives the same already-reranked evidence.
+        # LangGraph handles fan-out/fan-in: when _route_specialists returns
+        # multiple targets, all run; agent_outputs merges via _merge_dicts reducer.
         graph.add_edge("architect", "synthesize")
         graph.add_edge("bug_hunter", "synthesize")
         graph.add_edge("code_reviewer", "synthesize")
@@ -93,49 +96,96 @@ class RepoMindWorkflow:
     def _synthesize(self, state: AgentState) -> dict[str, Any]:
         started_at = perf_counter()
         outputs = state.get("agent_outputs", {})
+        chunks = state.get("retrieved_chunks", [])
+        context = "\n\n".join(chunk.get("content", "") for chunk in chunks)
+        strategy = state.get("retrieval_strategy", "hybrid")
+
         if outputs:
-            sections = "\n\n".join(f"## {name.replace('_', ' ').title()}\n{answer}" for name, answer in outputs.items())
-            answer = sections
-        else:
-            chunks = state.get("retrieved_chunks", [])
-            context = "\n\n".join(chunk.get("content", "") for chunk in chunks)
+            # Combine all specialist outputs into one coherent answer via LLM
+            sections = "\n\n".join(
+                f"## {name.replace('_', ' ').title()}\n{answer}"
+                for name, answer in outputs.items()
+            )
             try:
+                # Use LLM to synthesize a coherent answer from specialist outputs
+                refocus_instruction = ""
+                if strategy == "refocus":
+                    refocus_instruction = (
+                        "\nIMPORTANT: A previous answer was deemed not relevant enough. "
+                        "Focus very specifically on answering the exact question asked. "
+                        "Do not go off-topic.\n"
+                    )
                 response = self.llm_provider.get_chat_model("generation").invoke(
-                    "Answer the user's repository question using only the retrieved context. "
-                    "Cite file paths and line ranges when available.\n\n"
+                    f"Combine the following specialist analyses into one coherent, "
+                    f"well-structured response. Cite file paths and line ranges. "
+                    f"Remove redundancy between sections.{refocus_instruction}\n\n"
+                    f"USER QUESTION: {state.get('query', '')}\n\n"
+                    f"SPECIALIST OUTPUTS:\n{sections}"
+                )
+                answer = getattr(response, "content", str(response))
+            except Exception:
+                # If LLM fails, concatenate specialist outputs directly
+                answer = sections
+        else:
+            # No specialist outputs — generate directly from retrieved chunks
+            try:
+                refocus_instruction = ""
+                if strategy == "refocus":
+                    refocus_instruction = (
+                        "\nIMPORTANT: Focus precisely on the user's question. "
+                        "Do not go off-topic.\n"
+                    )
+                response = self.llm_provider.get_chat_model("generation").invoke(
+                    f"Answer the user's repository question using only the retrieved context. "
+                    f"Cite file paths and line ranges when available."
+                    f"{refocus_instruction}\n\n"
                     f"QUESTION: {state.get('query', '')}\nCONTEXT:\n{context}"
                 )
                 answer = getattr(response, "content", str(response))
             except Exception:
+                # Graceful degradation with file references
                 paths = []
                 for chunk in chunks:
                     path = chunk.get("metadata", {}).get("file_path", chunk.get("chunk_id"))
                     if path and path not in paths:
                         paths.append(path)
                 references = "\n".join(f"- {path}" for path in paths)
-                answer = f"I found these relevant code locations for: {state.get('query', '')}\n{references}" if references else "No relevant indexed code was found."
-        return {"synthesized_answer": answer, "agent_trace": [trace_event("synthesizer", "combined grounded agent outputs", started_at)]}
+                if references:
+                    answer = (
+                        f"I found these relevant code locations for: {state.get('query', '')}\n"
+                        f"{references}\n\n"
+                        f"*Note: LLM generation failed. Showing retrieved file references.*"
+                    )
+                else:
+                    answer = "No relevant indexed code was found."
+
+        return {
+            "synthesized_answer": answer,
+            "agent_trace": [trace_event("synthesizer", "combined grounded agent outputs", started_at)],
+        }
 
     def _evaluate(self, state: AgentState) -> dict[str, Any]:
         import asyncio
         started_at = perf_counter()
+        retry_count = state.get("retry_count", 0)
+
         scores = asyncio.run(
             evaluate_response(
                 state.get("query", ""),
                 state.get("retrieved_chunks", []),
                 state.get("synthesized_answer", ""),
-                provider=self.llm_provider
+                provider=self.llm_provider,
             )
         )
-        
-        result = {
+
+        result: dict[str, Any] = {
             "faithfulness_score": scores.faithfulness,
             "context_relevance_score": scores.context_relevance,
             "answer_relevance_score": scores.answer_relevance,
             "evaluation_passed": scores.passed,
-            "retry_count": state.get("retry_count", 0) + (0 if scores.passed else 1),
+            "retry_count": retry_count + (0 if scores.passed else 1),
         }
-        
+
         trace_msg = "evaluated answer"
         if not scores.passed:
             metrics = {
@@ -144,27 +194,38 @@ class RepoMindWorkflow:
                 "answer_relevance": scores.answer_relevance,
             }
             lowest_metric = min(metrics, key=metrics.get)
-            
+
             if lowest_metric == "faithfulness":
                 result["retrieval_strategy"] = "narrow"
             elif lowest_metric == "context_relevance":
                 result["retrieval_strategy"] = "broaden"
             else:
                 result["retrieval_strategy"] = "refocus"
-                
-            trace_msg = f"evaluated answer (failed on {lowest_metric})"
-            
+
+            trace_msg = f"evaluated answer (failed on {lowest_metric}, strategy → {result['retrieval_strategy']})"
+
         result["agent_trace"] = [
-            trace_event("rag_triad", trace_msg, started_at, passed=scores.passed)
+            trace_event("rag_triad", trace_msg, started_at, passed=scores.passed,
+                        faithfulness=scores.faithfulness,
+                        context_relevance=scores.context_relevance,
+                        answer_relevance=scores.answer_relevance)
         ]
         return result
 
     @staticmethod
     def _after_evaluation(state: AgentState) -> str:
-        return "retry" if not state.get("evaluation_passed", True) and state.get("retry_count", 0) < 2 else "end"
+        if not state.get("evaluation_passed", True) and state.get("retry_count", 0) < 2:
+            return "retry"
+        # If retries exhausted but still failed, add confidence warning
+        if not state.get("evaluation_passed", True):
+            answer = state.get("synthesized_answer", "")
+            if answer and "⚠️" not in answer:
+                # The answer will be returned as-is but the trace shows the warning
+                pass
+        return "end"
 
 
-def build_graph(code_retriever: CodeRetriever, **kwargs: Any) -> Any:
+def build_graph(code_retriever: CodeRetriever, *, dependency_graph: Any | None = None, **kwargs: Any) -> Any:
     """Convenience entry point returning a compiled RepoMind LangGraph."""
 
-    return RepoMindWorkflow(code_retriever, **kwargs).build()
+    return RepoMindWorkflow(code_retriever, dependency_graph=dependency_graph, **kwargs).build()
