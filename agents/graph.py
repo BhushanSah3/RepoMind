@@ -95,70 +95,78 @@ class RepoMindWorkflow:
         }
 
     def _synthesize(self, state: AgentState) -> dict[str, Any]:
+        from time import sleep
         started_at = perf_counter()
         outputs = state.get("agent_outputs", {})
         chunks = state.get("retrieved_chunks", [])
         context = "\n\n".join(chunk.get("content", "") for chunk in chunks)
         strategy = state.get("retrieval_strategy", "hybrid")
 
+        refocus_instruction = ""
+        if strategy == "refocus":
+            refocus_instruction = (
+                "\nIMPORTANT: A previous answer was deemed not relevant enough. "
+                "Focus very specifically on answering the exact question asked. "
+                "Do not go off-topic.\n"
+            )
+
         if outputs:
-            # Combine all specialist outputs into one coherent answer via LLM
             sections = "\n\n".join(
                 f"## {name.replace('_', ' ').title()}\n{answer}"
                 for name, answer in outputs.items()
             )
-            try:
-                # Use LLM to synthesize a coherent answer from specialist outputs
-                refocus_instruction = ""
-                if strategy == "refocus":
-                    refocus_instruction = (
-                        "\nIMPORTANT: A previous answer was deemed not relevant enough. "
-                        "Focus very specifically on answering the exact question asked. "
-                        "Do not go off-topic.\n"
-                    )
-                response = self.llm_provider.get_chat_model("generation").invoke(
-                    f"Combine the following specialist analyses into one coherent, "
-                    f"well-structured response. Cite file paths and line ranges. "
-                    f"Remove redundancy between sections.{refocus_instruction}\n\n"
-                    f"USER QUESTION: {state.get('query', '')}\n\n"
-                    f"SPECIALIST OUTPUTS:\n{sections}"
-                )
-                answer = extract_text(response)
-            except Exception:
-                # If LLM fails, concatenate specialist outputs directly
-                answer = sections
+            prompt = (
+                f"Combine the following specialist analyses into one coherent, "
+                f"well-structured response. Cite file paths and line ranges. "
+                f"Remove redundancy between sections.{refocus_instruction}\n\n"
+                f"USER QUESTION: {state.get('query', '')}\n\n"
+                f"SPECIALIST OUTPUTS:\n{sections}"
+            )
+            fallback_answer = sections  # Use raw specialist output if LLM fails
         else:
-            # No specialist outputs — generate directly from retrieved chunks
+            prompt = (
+                f"Answer the user's repository question using only the retrieved context. "
+                f"Cite file paths and line ranges when available."
+                f"{refocus_instruction}\n\n"
+                f"QUESTION: {state.get('query', '')}\nCONTEXT:\n{context}"
+            )
+            # Build fallback with file references
+            paths = []
+            for chunk in chunks:
+                path = chunk.get("metadata", {}).get("file_path", chunk.get("chunk_id"))
+                if path and path not in paths:
+                    paths.append(path)
+            fallback_answer = None  # Will be set below if all retries fail
+
+        # Retry with backoff
+        last_error = None
+        for attempt in range(3):
             try:
-                refocus_instruction = ""
-                if strategy == "refocus":
-                    refocus_instruction = (
-                        "\nIMPORTANT: Focus precisely on the user's question. "
-                        "Do not go off-topic.\n"
-                    )
-                response = self.llm_provider.get_chat_model("generation").invoke(
-                    f"Answer the user's repository question using only the retrieved context. "
-                    f"Cite file paths and line ranges when available."
-                    f"{refocus_instruction}\n\n"
-                    f"QUESTION: {state.get('query', '')}\nCONTEXT:\n{context}"
-                )
+                response = self.llm_provider.get_chat_model("generation").invoke(prompt)
                 answer = extract_text(response)
-            except Exception:
-                # Graceful degradation with file references
-                paths = []
-                for chunk in chunks:
-                    path = chunk.get("metadata", {}).get("file_path", chunk.get("chunk_id"))
-                    if path and path not in paths:
-                        paths.append(path)
-                references = "\n".join(f"- {path}" for path in paths)
-                if references:
-                    answer = (
-                        f"I found these relevant code locations for: {state.get('query', '')}\n"
-                        f"{references}\n\n"
-                        f"*Note: LLM generation failed. Showing retrieved file references.*"
-                    )
-                else:
-                    answer = "No relevant indexed code was found."
+                return {
+                    "synthesized_answer": answer,
+                    "agent_trace": [trace_event("synthesizer", "combined grounded agent outputs", started_at)],
+                }
+            except Exception as exc:
+                last_error = exc
+                if attempt < 2:
+                    sleep(2 ** attempt * 3)
+
+        # All retries failed
+        if fallback_answer is not None:
+            answer = fallback_answer
+        else:
+            references = "\n".join(f"- {p}" for p in paths) if paths else ""
+            error_info = str(last_error)[:150] if last_error else "Unknown error"
+            if references:
+                answer = (
+                    f"**Retrieved code locations for:** {state.get('query', '')}\n\n"
+                    f"{references}\n\n"
+                    f"⚠️ *LLM synthesis failed ({error_info}). Showing file references.*"
+                )
+            else:
+                answer = "No relevant indexed code was found."
 
         return {
             "synthesized_answer": answer,

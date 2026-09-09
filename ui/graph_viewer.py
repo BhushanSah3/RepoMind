@@ -41,7 +41,7 @@ def render_graph(st: Any, dependency_graph: Any) -> None:
         
         # Add nodes
         for node_id, data in graph.nodes(data=True):
-            node_type = data.get('type', 'unknown')
+            node_type = data.get('node_type', 'unknown')
             if node_type in allowed_types:
                 title = f"{node_type}: {node_id}"
                 net.add_node(node_id, label=node_id, title=title, 
@@ -58,7 +58,7 @@ def render_graph(st: Any, dependency_graph: Any) -> None:
         
         # Add edges
         for u, v, data in graph.edges(data=True):
-            if graph.nodes[u].get('type') in allowed_types and graph.nodes[v].get('type') in allowed_types:
+            if graph.nodes[u].get('node_type') in allowed_types and graph.nodes[v].get('node_type') in allowed_types:
                 relation = data.get('relation', 'unknown')
                 net.add_edge(u, v, title=relation, 
                              color=edge_colors.get(relation, 'black'))

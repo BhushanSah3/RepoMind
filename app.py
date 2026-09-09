@@ -123,11 +123,46 @@ def ingest(url: str) -> None:
     )
 
 with st.sidebar:
+    st.subheader('🔑 API Keys')
+    st.caption('Enter keys here or set them in `.env`. Keys are not stored permanently.')
+    
+    import os
+    
+    # Load current values from env/settings as defaults
+    current_google = os.environ.get('GOOGLE_API_KEY', '')
+    current_groq = os.environ.get('GROQ_API_KEY', '')
+    
+    google_key = st.text_input(
+        'Google API Key (Gemini)', 
+        value=current_google,
+        type='password',
+        help='Primary LLM. Get one at https://aistudio.google.com/apikey'
+    )
+    groq_key = st.text_input(
+        'Groq API Key (Fallback)', 
+        value=current_groq,
+        type='password',
+        help='Backup LLM when Gemini is rate-limited. Get one at https://console.groq.com'
+    )
+    
+    # Apply keys to environment so LLMProvider picks them up
+    if google_key:
+        os.environ['GOOGLE_API_KEY'] = google_key
+    if groq_key:
+        os.environ['GROQ_API_KEY'] = groq_key
+    
+    # Clear settings cache so new keys take effect
+    if google_key != current_google or groq_key != current_groq:
+        get_settings.cache_clear()
+    
+    st.divider()
     st.subheader('Repository')
     url_input = st.text_input('GitHub URL', placeholder='https://github.com/owner/repo')
     
     if st.button('🔄 Ingest Repo', use_container_width=True):
-        if url_input:
+        if not google_key and not groq_key:
+            st.error("Please enter at least one API key above.")
+        elif url_input:
             try: 
                 ingest(url_input)
             except Exception as error: 
@@ -147,14 +182,24 @@ with st.sidebar:
         
     st.divider()
     with st.expander("⚙️ Settings"):
-        try:
-            settings = get_settings()
-            if st.session_state.is_indexed:
-                st.write(f"**Current LLM Provider:** {settings.default_llm_provider}")
-            else:
-                st.write(f"**LLM Provider:** {settings.default_llm_provider}")
-        except Exception:
-            st.write("**LLM Provider:** Unknown")
+        settings = get_settings()
+        st.write(f"**LLM Provider:** {settings.default_llm_provider}")
+        st.write(f"**Gemini Model:** {settings.gemini_model}")
+        st.write(f"**Groq Model:** {settings.groq_model}")
+        
+        providers_available = []
+        if google_key:
+            providers_available.append("✅ Gemini")
+        else:
+            providers_available.append("❌ Gemini (no key)")
+        if groq_key:
+            providers_available.append("✅ Groq")
+        else:
+            providers_available.append("❌ Groq (no key)")
+        
+        st.write("**Fallback Chain:**")
+        for p in providers_available:
+            st.write(f"  {p}")
 
 chat, dashboard, graph_tab = st.tabs(['Chat', 'Dashboard', 'Graph'])
 
@@ -162,7 +207,7 @@ with chat:
     if st.session_state.is_indexed: 
         render_chat(st, st.session_state.workflow)
     else: 
-        st.info('Please index a repository first.')
+        st.info('Enter your API key and ingest a repository to start.')
         
 with dashboard:
     if st.session_state.is_indexed: 
