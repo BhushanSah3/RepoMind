@@ -5,6 +5,7 @@ import re
 from typing import Any
 from pydantic import BaseModel
 from llm.provider import LLMProvider
+from llm.utils import extract_text
 from config.settings import get_settings
 
 class TriadScores(BaseModel):
@@ -42,8 +43,8 @@ async def evaluate_response(query: str, retrieved_chunks: list[dict[str, Any]], 
 
 async def _score(model: Any, prompt: str) -> float:
     response = await model.ainvoke(prompt)
-    content = getattr(response, 'content', response)
-    match = re.search(r'\{.*?\}', str(content), re.DOTALL)
-    try: value = float(json.loads(match.group(0) if match else str(content)).get('score', 1.0))
+    content = extract_text(response)
+    match = re.search(r'\{.*?\}', content, re.DOTALL)
+    try: value = float(json.loads(match.group(0) if match else content).get('score', 1.0))
     except (ValueError, TypeError, json.JSONDecodeError): value = 1.0
     return max(0.0, min(1.0, value))

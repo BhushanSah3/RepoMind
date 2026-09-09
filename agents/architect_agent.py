@@ -7,6 +7,7 @@ from typing import Any
 
 from agents.state import AgentState, trace_event
 from llm.provider import LLMProvider
+from llm.utils import extract_text
 
 
 ARCHITECT_SYSTEM_PROMPT = """You are a senior software architect. Analyze only the supplied repository evidence.
@@ -34,7 +35,7 @@ def _generate(provider: LLMProvider, system: str, query: str, chunks: list[dict[
     try:
         model = provider.get_chat_model("generation")
         response = model.invoke([("system", system), ("human", f"Question: {query}\n\nDependency graph:\n{graph_context}\n\nCode evidence:\n{context}")])
-        return str(getattr(response, "content", response))
+        return extract_text(response)
     except Exception:
         citations = _citations(chunks)
         return "Architecture analysis requires an available LLM. Retrieved evidence: " + (", ".join(citations) or "no matching chunks.")

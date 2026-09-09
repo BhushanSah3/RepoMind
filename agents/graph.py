@@ -13,6 +13,7 @@ from agents.query_analyzer import QueryAnalyzer
 from agents.state import AgentState, trace_event
 from evaluation.rag_triad import evaluate_response
 from llm.provider import LLMProvider
+from llm.utils import extract_text
 
 
 class RepoMindWorkflow:
@@ -122,7 +123,7 @@ class RepoMindWorkflow:
                     f"USER QUESTION: {state.get('query', '')}\n\n"
                     f"SPECIALIST OUTPUTS:\n{sections}"
                 )
-                answer = getattr(response, "content", str(response))
+                answer = extract_text(response)
             except Exception:
                 # If LLM fails, concatenate specialist outputs directly
                 answer = sections
@@ -141,7 +142,7 @@ class RepoMindWorkflow:
                     f"{refocus_instruction}\n\n"
                     f"QUESTION: {state.get('query', '')}\nCONTEXT:\n{context}"
                 )
-                answer = getattr(response, "content", str(response))
+                answer = extract_text(response)
             except Exception:
                 # Graceful degradation with file references
                 paths = []
