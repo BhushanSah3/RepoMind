@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
 
     gemini_model: str = "gemini-3.6-flash"
-    groq_model: str = "llama-3.1-8b-instant"
+    groq_model: str = "qwen/qwen3.8-27b"
     ollama_model: str = "llama3.1"
 
     embedding_model: str = "all-MiniLM-L6-v2"

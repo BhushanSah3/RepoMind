@@ -77,8 +77,15 @@ def _generate(
     error_msg = str(last_error)[:200] if last_error else "No details"
 
     # Check for specific error types to give helpful messages
-    if "429" in error_msg or "rate" in error_msg.lower() or "quota" in error_msg.lower():
-        reason = "API rate limit exceeded. Wait a moment and try again, or add a backup API key (Groq/OpenRouter) in the sidebar."
+    if "429" in error_msg or "rate" in error_msg.lower() or "quota" in error_msg.lower() or "resource" in error_msg.lower():
+        reason = (
+            "**Your API rate limit has been exceeded.** "
+            "The free tier of Gemini/Groq has limited requests per minute.\n\n"
+            "**What you can do:**\n"
+            "- ⏳ Wait 1-2 minutes and try again\n"
+            "- 🔑 Add a Groq API key in the sidebar as a backup (free at https://console.groq.com)\n"
+            "- 💳 Upgrade your Google API plan for higher rate limits"
+        )
     elif "404" in error_msg or "NOT_FOUND" in error_msg:
         reason = f"Model not found. Check your model configuration. ({error_msg[:100]})"
     elif "401" in error_msg or "403" in error_msg or "PERMISSION" in error_msg:
@@ -87,8 +94,10 @@ def _generate(
         reason = f"{error_type}: {error_msg[:150]}"
 
     return (
-        f"⚠️ **LLM generation failed** after {max_retries + 1} attempts.\n\n"
-        f"**Reason**: {reason}\n\n"
+        f"## ⚠️ LLM Generation Failed\n\n"
+        f"All {max_retries + 1} attempts to generate a response failed.\n\n"
+        f"{reason}\n\n"
+        f"---\n\n"
         f"**Retrieved code evidence** ({len(chunks)} chunks): {', '.join(citations) or 'none'}"
     )
 
